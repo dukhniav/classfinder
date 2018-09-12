@@ -2,10 +2,18 @@
 from urllib.request import urlopen as uReq
 from bs4 import BeautifulSoup as soup
 from selenium import webdriver
+from selenium.webdriver.firefox.options import Options
 from pandas import DataFrame
 import time
 import numpy as np
 import re
+from tqdm import tqdm
+
+# Global vars
+
+# making firefox headless
+fire_options = Options()
+fire_options.add_argument("--headless")
 
 # address of ClassFinder
 my_url = 'https://admin.wwu.edu/pls/wwis/wwsktime.SelClass'
@@ -34,21 +42,23 @@ temp = re.findall(r'"([^"]*)"', string)
 # make list of all subjects
 subj_options = temp[2:]
 
-driver = webdriver.Firefox(executable_path="/home/artem/projects/scrape/drivers/geckodriver")
+# "firefox_options=fire_options" --> headless firefox
+driver = webdriver.Firefox(firefox_options=fire_options,
+                           executable_path="/home/artem/projects/scrape/drivers/geckodriver")
 
 driver.get("https://admin.wwu.edu/pls/wwis/wwsktime.SelClass")
 table = driver.find_element_by_name('sel_subj')
 
-#--------------------------
+# --------------------------
 
 first_go = True
-for subj in subj_options:
+for subj in tqdm(subj_options):
     if first_go:
         # unselect first option
         driver.find_element_by_xpath("//select[@name='sel_subj']/option[text()='All Subjects']").click()
 
         # select wanted subject
-        driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value='"+ subj +"']").click()
+        driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value='" + subj + "']").click()
         CURR_SUBJ = subj
         time.sleep(.5)
     else:
@@ -77,7 +87,7 @@ for subj in subj_options:
     crn = []
 
     # list of crns, which are not part of > <, same order
-    crns = new_soup.find_all('input', {'name':'sel_crn'})
+    crns = new_soup.find_all('input', {'name': 'sel_crn'})
     crn_ctr = 1
     for x in crns:
         crn.append(x.get('value'))
@@ -107,73 +117,108 @@ for subj in subj_options:
     # make array to preserve element arrangment with duplicates
     nptable = np.array(header_table)
 
-    counter = 0
-    crn_counter = 0
-    temp_counter = 0
+    crn_counter = 0  # counter to keep track of how many CRNs have been assigned
+    single_class_list = []  # list of all parts, made up of 'class_parts_list' after loop
+    since_prereq_ctr = 0  # counter to keep track how many entries occured since last 'Prerequisite'
+    prev_class_num = 0  # previous class number, to make sure the right class is being added
+    class_part_list = []  # keeps temporary class parts to be 'dumped' later
+    backup_crn = 0  # previous class CRN
 
-    stuff = False
-    prereq = False
-    new_temp_list = []
-    prereq_counter = 0
-    last_class = 0
+    total_ctr = 0  # total counter since start
+    class_part_ctr = 0  # counts the parts of the class, normally < 9
+
+    subj_sat = False  # class satisfied with class name -> EX: 'HIST 112'
+    prereq = False  # class with 'Prerequisites'
+    runaway_class = False  # class with info embedded past 'Prerequisites'
 
     for entry in nptable:
+
         if 'Prerequisites' in entry:
-            prereq_counter = counter
+            since_prereq_ctr = total_ctr
             prereq = True
-        if CURR_SUBJ in entry[:5] and stuff is False and prereq is False and len(entry) < 10 and \
-                '.' not in entry:
+
+        if CURR_SUBJ in entry and subj_sat is True and len(entry) < 10 and \
+                '.' not in entry and len(class_part_list) > 0:
+            runaway_class = True  # set runaway to True
+            class_part_ctr = total_ctr  # reset part_ctr
+            class_part_list.clear()  # clear class_part_list
+            class_part_list.append(entry)  # add first entry to list
+
+        if CURR_SUBJ in entry[:5] and subj_sat is False and prereq is False and len(entry) < 10 and \
+                '.' not in entry and len(class_part_list) == 0:
             try:
-                if int(entry[-3:]) >= last_class:
-                    stuff = True
-                    temp_counter = counter
-                    # print('-----------------------------------------')
-                    # print('subject line encountered')
-                    # print('counter: ' + str(counter))
-                    # print("class: " + entry)
-                    last_class = int(entry[-3:])
-                    new_temp_list.append(entry)
-            except ValueError:
-                print('class with letter')
-        if stuff:
-            if counter - temp_counter < 9:
-                if counter - temp_counter == 1:
-                    #print("title: " + entry)
-                    new_temp_list.append(entry)
-                    # CRN after Course title
-                    #print("crn  : " + crn[crn_counter])
-                    new_temp_list.append(crn[crn_counter])
-                    if crn_counter < ( len(crn) - 1 ):
-                        crn_counter = crn_counter + 1
-                if counter - temp_counter == 2:
-                    #print("cap  : " + entry)
-                    new_temp_list.append(entry)
-                if counter - temp_counter == 3:
-                    #print("enrl : " + entry)
-                    new_temp_list.append(entry)
-                if counter - temp_counter == 4:
-                    #print("avail: " + entry)
-                    new_temp_list.append(entry)
-                if counter - temp_counter == 5:
-                    #print("instr: " + entry)
-                    new_temp_list.append(entry)
-                if counter - temp_counter == 6:
-                    #print("dates: " + entry)
-                    new_temp_list.append(entry)
-            else:
-                stuff = False
-        if prereq_counter < counter:
+                if int(entry[-3:]) >= prev_class_num:  # save last 3 number of class name/num
+                    subj_sat = True  # set sub satisfied to True
+
+                    class_part_ctr = total_ctr  # reset part counter
+                    prev_class_num = int(entry[-3:])  # update prev class number
+
+                    class_part_list.append(entry)  # add entry to class list
+
+            except ValueError:  # IF letter in class number
+                if int(entry[-4:-1]) >= prev_class_num:  # add last 3 before letter
+                    subj_sat = True
+
+                    class_part_ctr = total_ctr
+                    prev_class_num = int(entry[-4:-1])
+
+                    class_part_list.append(entry)
+
+        if subj_sat:  # subj is satisfied
+            if total_ctr - class_part_ctr < 9:  # counter add up to less then 9
+                # Title & CRN
+                if total_ctr - class_part_ctr == 1:
+                    class_part_list.append(entry)  # first one is TITLE, automatically followed by
+                    # CRN from CRN LIST
+                    # CRN after Course Title
+                    if not runaway_class:  # runaway = False
+                        class_part_list.append(crn[crn_counter])
+                        backup_crn = crn[crn_counter]  # save copy to backup
+
+                        if crn_counter < (len(crn) - 1):  # update crn_counter
+                            crn_counter = crn_counter + 1
+                    else:  # runaway = True
+                        class_part_list.append(backup_crn)
+                        runaway_class = False  # set runaway to False
+
+                # Cap
+                if total_ctr - class_part_ctr == 2:
+                    class_part_list.append(entry)
+
+                # Enrl
+                if total_ctr - class_part_ctr == 3:
+                    class_part_list.append(entry)
+
+                # Avail
+                if total_ctr - class_part_ctr == 4:
+                    class_part_list.append(entry)
+
+                # Instructor
+                if total_ctr - class_part_ctr == 5:
+                    class_part_list.append(entry)
+
+                # Dates
+                if total_ctr - class_part_ctr == 6:
+                    class_part_list.append(entry)
+            else:  # if counter don't add up, set subj to false
+                subj_sat = False
+
+        if since_prereq_ctr < total_ctr:
             prereq = False
 
-        counter = counter + 1
+        if len(class_part_list) == 8:  # add everything from temp list to class list
+            for x in class_part_list:
+                single_class_list.append(x)
+            class_part_list.clear()
+
+        total_ctr = total_ctr + 1  # update total counter
 
     # needed to check the right options
     first_go = False
 
     last_class = 0
 
-    print(new_temp_list)
-    CLASSES.append(new_temp_list)
+    CLASSES.append(single_class_list)
 
     time.sleep(.5)
 
@@ -229,8 +274,6 @@ print(enrls)
 print(avails)
 print(instrs)
 print(dates)
-
-
 
 df = DataFrame({'Class': classes, 'Title': titles, 'CRN': crns,
                 'Cap': caps, 'Enrl': enrls, 'Avail': avails,
