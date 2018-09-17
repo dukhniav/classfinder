@@ -1,111 +1,147 @@
 # import libraries
+import re
+import time
 from urllib.request import urlopen as uReq
+
+import numpy as np
 from bs4 import BeautifulSoup as soup
+from pandas import DataFrame
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
-from pandas import DataFrame
-import time
-import numpy as np
-import re
 from tqdm import tqdm
 
-# Global vars
 
-# making firefox headless
-fire_options = Options()
-fire_options.add_argument("--headless")
+CURR_SUBJ = ''                   # current subject
+CLASSES = []                     # full list of classes
 
-# address of ClassFinder
-my_url = 'https://admin.wwu.edu/pls/wwis/wwsktime.SelClass'
 
-# opening client, grabbing page
-uClient = uReq(my_url)
-# offload content into variable
-page_html = uClient.read()
-# close connection
-uClient.close()
+##########
+#
+#   v1.3
+#
+##########
 
-# current subject
-CURR_SUBJ = ''
 
-# full list of classes
-CLASSES = []
+def browser_headless():
+    # making firefox headless
+    fire_options = Options()
+    fire_options.add_argument("--headless")
+    return fire_options
 
-# html parser
-page_soup = soup(page_html, "html.parser")
 
-# get Subject options
-options = page_soup.select('select[name=sel_subj] > option')
-string = str(options)
-temp = re.findall(r'"([^"]*)"', string)
+def load_page(client):
+    html_page = client.read()
+    return html_page
 
-# make list of all subjects
-subj_options = temp[2:]
 
-# "firefox_options=fire_options" --> headless firefox
-driver = webdriver.Firefox(firefox_options=fire_options,
-                           executable_path="/home/artem/projects/scrape/drivers/geckodriver")
+def open_url(url):
+    client = uReq(url)
+    return client
 
-driver.get("https://admin.wwu.edu/pls/wwis/wwsktime.SelClass")
-table = driver.find_element_by_name('sel_subj')
 
-# --------------------------
+def close_url(client):
+    # close connection
+    client.close()
 
-first_go = True
-for subj in tqdm(subj_options):
-    if first_go:
-        # unselect first option
-        driver.find_element_by_xpath("//select[@name='sel_subj']/option[text()='All Subjects']").click()
 
-        # select wanted subject
-        driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value='" + subj + "']").click()
-        CURR_SUBJ = subj
-        time.sleep(.5)
-    else:
-        # unselect first option
-        driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value= '" + CURR_SUBJ + "']").click()
-        time.sleep(.5)
-        # select wanted subject
-        driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value='" + subj + "']").click()
-        CURR_SUBJ = subj
-        time.sleep(.5)
+def parse_page(page):
+    # html parser
+    page_soup = soup(page, "html.parser")
+    return page_soup
 
-    # click submit button
-    submit = '//input[@type="submit" and @value="Search Now"]'
-    driver.find_element_by_xpath(submit).click()
 
+def get_subject_options(page_soup):
+    # get Subject options
+    options = page_soup.select('select[name=sel_subj] > option')
+    string = str(options)
+    subj_temp = re.findall(r'"([^"]*)"', string)
+
+    # make list of all subjects
+    subj_options = subj_temp[2:]
+    return subj_options
+
+
+def init_browser(url):
+    # "firefox_options=fire_options" --> headless firefox
+    driver = webdriver.Firefox(firefox_options=browser_headless(),
+                               executable_path="/home/artem/projects/scrape/drivers/geckodriver")
+
+    driver.get(url)
+    return driver
+
+
+def get_subjects(driver):
+    table = driver.find_element_by_name('sel_subj')
+    return table
+
+
+def select_first_option(driver, subj):
+    global CURR_SUBJ
+
+    # unselect first option
+    driver.find_element_by_xpath("//select[@name='sel_subj']/option[text()='All Subjects']").click()
+    # select wanted subject
+    driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value='" + subj + "']").click()
+    CURR_SUBJ = subj
+
+
+def select_rest_options(driver, subj):
+    global CURR_SUBJ
+
+    # unselect first option
+    driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value= '" + CURR_SUBJ + "']").click()
     time.sleep(.5)
+    # select wanted subject
+    driver.find_element_by_xpath("//select[@name='sel_subj']/option[@value='" + subj + "']").click()
+    CURR_SUBJ = subj
+    time.sleep(.3)
 
-    new_soup = soup(driver.page_source, "html.parser")
 
-    head_tag = new_soup.head
-    map_tag = new_soup.map
+def write_to_file(avails, caps, classes, crns, dates, enrls, instrs, titles, filename):
+    df = DataFrame({'Class': classes, 'Title': titles, 'CRN': crns,
+                    'Cap': caps, 'Enrl': enrls, 'Avail': avails,
+                    'Instructor': instrs, 'Dates': dates})
+    df.to_csv(filename, sep='\t', encoding='utf-8')
 
-    table_tag = map_tag.contents[11]
 
-    new_table = []
-    crn = []
+def get_final_class_list(flat_classes_final):
+    classes = []
+    titles = []
+    crns = []
+    caps = []
+    enrls = []
+    avails = []
+    instrs = []
+    dates = []
+    class_ctr = 0
+    for c in flat_classes_final:
+        if class_ctr % 8 == 0:
+            classes.append(c)
+        if class_ctr % 8 == 1:
+            titles.append(c)
+        if class_ctr % 8 == 2:
+            crns.append(c)
+        if class_ctr % 8 == 3:
+            caps.append(c)
+        if class_ctr % 8 == 4:
+            enrls.append(c)
+        if class_ctr % 8 == 5:
+            avails.append(c)
+        if class_ctr % 8 == 6:
+            instrs.append(c)
+        if class_ctr % 8 == 7:
+            dates.append(c)
+        class_ctr = class_ctr + 1
+    return avails, caps, classes, crns, dates, enrls, instrs, titles
 
-    # list of crns, which are not part of > <, same order
-    crns = new_soup.find_all('input', {'name': 'sel_crn'})
-    crn_ctr = 1
-    for x in crns:
-        crn.append(x.get('value'))
-        crn_ctr = crn_ctr + 1
 
-    # find everythin between > <
-    for child in table_tag.children:
-        temp = re.findall(r'\>(.*?)\<', repr(child))
-        if (len(temp) > 0):
-            new_table = temp
+def flatten_class_lists(flat_classes):
+    for x in CLASSES:
+        for i in x:
+            flat_classes.append(i)
 
-    # removing empty spaces
-    table = list(filter(None, new_table))
 
-    # remove 15 first spots for headers of table
-    header_table = table[15:]
-
-    # remove "CLOSED" and other elements in list
+def remove_elements_repeating(header_table):
     for entry in header_table:
         if entry == 'CLOSED                               ':
             header_table.remove(entry)
@@ -114,169 +150,205 @@ for subj in tqdm(subj_options):
         if entry == '\xa0':
             header_table.remove(entry)
 
-    # make array to preserve element arrangment with duplicates
-    nptable = np.array(header_table)
 
-    crn_counter = 0  # counter to keep track of how many CRNs have been assigned
-    single_class_list = []  # list of all parts, made up of 'class_parts_list' after loop
-    since_prereq_ctr = 0  # counter to keep track how many entries occured since last 'Prerequisite'
-    prev_class_num = 0  # previous class number, to make sure the right class is being added
-    class_part_list = []  # keeps temporary class parts to be 'dumped' later
-    backup_crn = 0  # previous class CRN
+def get_crns(crn, new_soup):
+    crns = new_soup.find_all('input', {'name': 'sel_crn'})
+    crn_ctr = 1
+    for x in crns:
+        crn.append(x.get('value'))
+        crn_ctr = crn_ctr + 1
 
-    total_ctr = 0  # total counter since start
-    class_part_ctr = 0  # counts the parts of the class, normally < 9
 
-    subj_sat = False  # class satisfied with class name -> EX: 'HIST 112'
-    prereq = False  # class with 'Prerequisites'
-    runaway_class = False  # class with info embedded past 'Prerequisites'
+def submit_button_click(driver):
+    submit = '//input[@type="submit" and @value="Search Now"]'
+    driver.find_element_by_xpath(submit).click()
 
-    for entry in nptable:
 
-        if 'Prerequisites' in entry:
-            since_prereq_ctr = total_ctr
-            prereq = True
+def get_class_list(driver, subjects):
+    first_go = True
+    for subj in tqdm(subjects):
+        crn_counter = 0  # counter to keep track of how many CRNs have been assigned
+        single_class_list = []  # list of all parts, made up of 'class_parts_list' after loop
+        since_prereq_ctr = 0  # counter to keep track how many entries occured since last 'Prerequisite'
+        prev_class_num = 0  # previous class number, to make sure the right class is being added
+        class_part_list = []  # keeps temporary class parts to be 'dumped' later
+        backup_crn = 0  # previous class CRN
 
-        if CURR_SUBJ in entry and subj_sat is True and len(entry) < 10 and \
-                '.' not in entry and len(class_part_list) > 0:
-            runaway_class = True  # set runaway to True
-            class_part_ctr = total_ctr  # reset part_ctr
-            class_part_list.clear()  # clear class_part_list
-            class_part_list.append(entry)  # add first entry to list
+        total_ctr = 0  # total counter since start
+        class_part_ctr = 0  # counts the parts of the class, normally < 9
 
-        if CURR_SUBJ in entry[:5] and subj_sat is False and prereq is False and len(entry) < 10 and \
-                '.' not in entry and len(class_part_list) == 0:
-            try:
-                if int(entry[-3:]) >= prev_class_num:  # save last 3 number of class name/num
-                    subj_sat = True  # set sub satisfied to True
+        subj_sat = False  # class satisfied with class name -> EX: 'HIST 112'
+        prereq = False  # class with 'Prerequisites'
+        runaway_class = False  # class with info embedded past 'Prerequisites'
 
-                    class_part_ctr = total_ctr  # reset part counter
-                    prev_class_num = int(entry[-3:])  # update prev class number
+        new_table = []
+        crn = []
 
-                    class_part_list.append(entry)  # add entry to class list
+        flat_classes = []
 
-            except ValueError:  # IF letter in class number
-                if int(entry[-4:-1]) >= prev_class_num:  # add last 3 before letter
-                    subj_sat = True
+        if first_go:
+            select_first_option(driver, subj)
+        else:
+            select_rest_options(driver, subj)
 
-                    class_part_ctr = total_ctr
-                    prev_class_num = int(entry[-4:-1])
+        # click submit button
+        submit_button_click(driver)
 
-                    class_part_list.append(entry)
+        time.sleep(.5)
 
-        if subj_sat:  # subj is satisfied
-            if total_ctr - class_part_ctr < 9:  # counter add up to less then 9
-                # Title & CRN
-                if total_ctr - class_part_ctr == 1:
-                    class_part_list.append(entry)  # first one is TITLE, automatically followed by
-                    # CRN from CRN LIST
-                    # CRN after Course Title
-                    if not runaway_class:  # runaway = False
-                        class_part_list.append(crn[crn_counter])
-                        backup_crn = crn[crn_counter]  # save copy to backup
+        new_soup = soup(driver.page_source, "html.parser")
 
-                        if crn_counter < (len(crn) - 1):  # update crn_counter
-                            crn_counter = crn_counter + 1
-                    else:  # runaway = True
-                        class_part_list.append(backup_crn)
-                        runaway_class = False  # set runaway to False
+        map_tag = new_soup.map
 
-                # Cap
-                if total_ctr - class_part_ctr == 2:
-                    class_part_list.append(entry)
+        table_tag = map_tag.contents[11]
 
-                # Enrl
-                if total_ctr - class_part_ctr == 3:
-                    class_part_list.append(entry)
+        # list of crns, which are not part of > <, same order
+        get_crns(crn, new_soup)
 
-                # Avail
-                if total_ctr - class_part_ctr == 4:
-                    class_part_list.append(entry)
+        # find everything between > <
+        for child in table_tag.children:
+            temp = re.findall(r'>(.*?)<', repr(child))
+            if len(temp) > 0:
+                new_table = temp
 
-                # Instructor
-                if total_ctr - class_part_ctr == 5:
-                    class_part_list.append(entry)
+        # removing empty spaces
+        table = list(filter(None, new_table))
 
-                # Dates
-                if total_ctr - class_part_ctr == 6:
-                    class_part_list.append(entry)
-            else:  # if counter don't add up, set subj to false
-                subj_sat = False
+        # remove 15 first spots for headers of table
+        header_table = table[15:]
 
-        if since_prereq_ctr < total_ctr:
-            prereq = False
+        # remove "CLOSED" and other elements in list
+        remove_elements_repeating(header_table)
 
-        if len(class_part_list) == 8:  # add everything from temp list to class list
-            for x in class_part_list:
-                single_class_list.append(x)
-            class_part_list.clear()
+        # make array to preserve element arrangment with duplicates
+        nptable = np.array(header_table)
 
-        total_ctr = total_ctr + 1  # update total counter
+        for entry in nptable:
 
-    # needed to check the right options
-    first_go = False
+            if 'Prerequisites' in entry:
+                since_prereq_ctr = total_ctr
+                prereq = True
 
-    last_class = 0
+            if CURR_SUBJ in entry and subj_sat is True and len(entry) < 10 and \
+                    '.' not in entry and len(class_part_list) > 0:
+                runaway_class = True  # set runaway to True
+                class_part_ctr = total_ctr  # reset part_ctr
+                class_part_list.clear()  # clear class_part_list
+                class_part_list.append(entry)  # add first entry to list
 
-    CLASSES.append(single_class_list)
+            if CURR_SUBJ in entry[:5] and subj_sat is False and prereq is False and len(entry) < 10 and \
+                    '.' not in entry and len(class_part_list) == 0:
+                try:
+                    if int(entry[-3:]) >= prev_class_num:  # save last 3 number of class name/num
+                        subj_sat = True  # set sub satisfied to True
 
-    time.sleep(.5)
+                        class_part_ctr = total_ctr  # reset part counter
+                        prev_class_num = int(entry[-3:])  # update prev class number
 
-    # back button
-    driver.execute_script("window.history.go(-1)")
-    time.sleep(.5)
+                        class_part_list.append(entry)  # add entry to class list
 
-# to flatten out the list of Classes
-flat_classes = []
-for x in CLASSES:
-    for i in x:
-        flat_classes.append(i)
+                except ValueError:  # IF letter in class number
+                    if int(entry[-4:-1]) >= prev_class_num:  # add last 3 before letter
+                        subj_sat = True
 
-# removing empty spaces
-flat_classes_final = list(filter(None, flat_classes))
+                        class_part_ctr = total_ctr
+                        prev_class_num = int(entry[-4:-1])
 
-classes = []
-titles = []
-crns = []
-caps = []
-enrls = []
-avails = []
-instrs = []
-dates = []
+                        class_part_list.append(entry)
 
-class_ctr = 0
-for c in flat_classes_final:
-    if class_ctr % 8 == 0:
-        classes.append(c)
-    if class_ctr % 8 == 1:
-        titles.append(c)
-    if class_ctr % 8 == 2:
-        crns.append(c)
-    if class_ctr % 8 == 3:
-        caps.append(c)
-    if class_ctr % 8 == 4:
-        enrls.append(c)
-    if class_ctr % 8 == 5:
-        avails.append(c)
-    if class_ctr % 8 == 6:
-        instrs.append(c)
-    if class_ctr % 8 == 7:
-        dates.append(c)
-    class_ctr = class_ctr + 1
+            if subj_sat:  # subj is satisfied
+                if total_ctr - class_part_ctr < 9:  # counter add up to less then 9
+                    # Title & CRN
+                    if total_ctr - class_part_ctr == 1:
+                        class_part_list.append(entry)  # first one is TITLE, automatically followed by
+                        # CRN from CRN LIST
+                        # CRN after Course Title
+                        if not runaway_class:  # runaway = False
+                            class_part_list.append(crn[crn_counter])
+                            backup_crn = crn[crn_counter]  # save copy to backup
 
-print(flat_classes_final)
-print('--------------------------------')
-print(classes)
-print(titles)
-print(crns)
-print(caps)
-print(enrls)
-print(avails)
-print(instrs)
-print(dates)
+                            if crn_counter < (len(crn) - 1):  # update crn_counter
+                                crn_counter = crn_counter + 1
+                        else:  # runaway = True
+                            class_part_list.append(backup_crn)
+                            runaway_class = False  # set runaway to False
 
-df = DataFrame({'Class': classes, 'Title': titles, 'CRN': crns,
-                'Cap': caps, 'Enrl': enrls, 'Avail': avails,
-                'Instructor': instrs, 'Dates': dates})
+                    # Cap
+                    if total_ctr - class_part_ctr == 2:
+                        class_part_list.append(entry)
 
-df.to_csv('test.csv', sep='\t', encoding='utf-8')
+                    # Enrl
+                    if total_ctr - class_part_ctr == 3:
+                        class_part_list.append(entry)
+
+                    # Avail
+                    if total_ctr - class_part_ctr == 4:
+                        class_part_list.append(entry)
+
+                    # Instructor
+                    if total_ctr - class_part_ctr == 5:
+                        class_part_list.append(entry)
+
+                    # Dates
+                    if total_ctr - class_part_ctr == 6:
+                        class_part_list.append(entry)
+                else:  # if counter don't add up, set subj to false
+                    subj_sat = False
+
+            if since_prereq_ctr < total_ctr:
+                prereq = False
+
+            if len(class_part_list) == 8:  # add everything from temp list to class list
+                for x in class_part_list:
+                    single_class_list.append(x)
+                class_part_list.clear()
+
+            total_ctr = total_ctr + 1  # update total counter
+
+        # needed to check the right options
+        first_go = False
+
+        CLASSES.append(single_class_list)
+
+        time.sleep(.5)
+
+        # back button
+        driver.execute_script("window.history.go(-1)")
+        time.sleep(.5)
+
+    # to flatten out the list of Classes
+    flatten_class_lists(flat_classes)
+
+    # removing empty spaces
+    flat_classes_final = list(filter(None, flat_classes))
+
+    avails, caps, classes, crns, dates, enrls, instrs, titles = get_final_class_list(flat_classes_final)
+
+    write_to_file(avails, caps, classes, crns, dates, enrls, instrs, titles, 'test.csv')
+
+
+def main():
+    # address of ClassFinder
+    my_url = 'https://admin.wwu.edu/pls/wwis/wwsktime.SelClass'
+
+    # opening url, grabbing page
+    client = open_url(my_url)
+
+    # offload content into variable
+    html_page = load_page(client)
+    close_url(client)
+
+    # parse contents of html page
+    page_soup = parse_page(html_page)
+
+    # retrieve list of subj options
+    subjects = get_subject_options(page_soup)
+
+    # init headless browser
+    driver = init_browser(my_url)
+
+    get_class_list(driver, subjects)
+
+
+if __name__ == '__main__':
+    main()
